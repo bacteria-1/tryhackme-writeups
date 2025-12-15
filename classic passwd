@@ -1,0 +1,10 @@
+#make the file executable
+chmod +x challenge.challenge
+
+#use a ltrace to reverse engineer the password
+ltrace ./challenge.challeng
+
+#enter any password
+
+./challemge.challenge
+#enter the password and there is your flag
